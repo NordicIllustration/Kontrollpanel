@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Script from "next/script";      // ⬅️ import för Cast-SDK
+import CastInit from "@/components/CastInit"; // ⬅️ vår init-komponent
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,6 +29,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        {/* Google Cast SDK */}
+        <Script
+          src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"
+          strategy="afterInteractive"
+        />
+        {/* Init av Chromecast */}
+        <CastInit />
+
         {children}
       </body>
     </html>
