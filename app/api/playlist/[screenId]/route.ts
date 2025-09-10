@@ -1,12 +1,13 @@
 // app/api/playlist/[screenId]/route.ts
 import { NextResponse } from "next/server";
-import supabaseAdmin from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-type Item = {
+type ItemRow = {
   id: string;
-  type: "video" | "image";
-  url: string;
-  duration?: number; // ms för bilder
+  media_id: string;           // lagrar storage-path t.ex. "uploads/fil.mp4"
+  kind?: "image" | "video" | null;
+  duration?: number | null;   // sekunder för bilder
+  position?: number | null;
 };
 
 export async function GET(
@@ -14,58 +15,63 @@ export async function GET(
   { params }: { params: { screenId: string } }
 ) {
   try {
-    const screenId = params.screenId;
+    const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const bucket =
+      process.env.NEXT_PUBLIC_SUPABASE_BUCKET?.trim() || "media";
 
-    // 1) Hämta skärm → aktiv spellista
-    const { data: screen, error: se } = await supabaseAdmin
-      .from("screens")
-      .select("id, active_playlist_id")
-      .eq("id", screenId)
-      .maybeSingle();
+    // 1) Hämta aktiv spellista för skärmen
+    const { data: playlist, error: plErr } = await supabaseAdmin
+      .from("playlists")
+      .select("id")
+      .eq("screen_id", params.screenId)
+      .eq("is_active", true)
+      .single();
 
-    if (se) throw se;
-    if (!screen) {
-      return NextResponse.json({ items: [], reason: "no_screen" }, { status: 200 });
+    if (plErr || !playlist) {
+      // Ingen aktiv spellista = tom lista
+      return NextResponse.json({ items: [] }, { status: 200 });
     }
 
-    if (!screen.active_playlist_id) {
-      return NextResponse.json(
-        { items: [], reason: "no_active_playlist" },
-        { status: 200 }
-      );
-    }
-
-    // 2) Hämta rader i playlisten
-    const { data: rows, error: re } = await supabaseAdmin
+    // 2) Hämta items i ordning
+    const { data: items, error: itErr } = await supabaseAdmin
       .from("playlist_items")
-      .select(
-        "id, media_id, order_index, duration_sec"
-      )
-      .eq("playlist_id", screen.active_playlist_id)
-      .order("order_index", { ascending: true });
+      .select("id, media_id, kind, duration, position")
+      .eq("playlist_id", playlist.id)
+      .order("position", { ascending: true });
 
-    if (re) throw re;
+    if (itErr) {
+      return NextResponse.json({ error: itErr.message }, { status: 500 });
+    }
 
-    // 3) Bygg Item[] (media_id = storage-path i bucket "media")
-    const items: Item[] = (rows ?? []).map((r) => {
-      const { data } = supabaseAdmin.storage.from("media").getPublicUrl(r.media_id);
-      const pathLower = (r.media_id ?? "").toLowerCase();
-      const isVideo = /\.(mp4|webm|mov|m4v|ogg)$/.test(pathLower);
+    // 3) Bygg publika URLs från storage
+    const payload = (items as ItemRow[]).map((it) => {
+      const url = `${baseUrl}/storage/v1/object/public/${bucket}/${it.media_id}`;
+      const type = it.kind ?? guessKind(it.media_id);
+      const duration =
+        it.duration ?? (type === "image" ? 8 : null); // default 8s för bild
 
-      return {
-        id: String(r.id),
-        type: isVideo ? "video" : "image",
-        url: data.publicUrl,
-        duration: isVideo ? undefined : ((r.duration_sec ?? 8) * 1000),
-      };
+      return { id: it.id, type, url, duration };
     });
 
-    return NextResponse.json({ items }, { status: 200 });
+    return NextResponse.json({ items: payload }, { status: 200 });
   } catch (e: any) {
-    console.error("playlist route error:", e?.message || e);
     return NextResponse.json(
-      { items: [], error: e?.message || "unknown_error" },
-      { status: 200 }
+      { error: String(e?.message ?? e) },
+      { status: 500 }
     );
   }
+}
+
+function guessKind(path: string): "image" | "video" {
+  const p = path.toLowerCase();
+  if (
+    p.endsWith(".jpg") ||
+    p.endsWith(".jpeg") ||
+    p.endsWith(".png") ||
+    p.endsWith(".gif") ||
+    p.endsWith(".webp")
+  ) {
+    return "image";
+  }
+  return "video";
 }

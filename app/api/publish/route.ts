@@ -1,61 +1,116 @@
+// app/api/publish/route.ts
 import { NextResponse } from "next/server";
-import supabaseAdmin from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+
+/**
+ * Body-JSON vi tar emot:
+ * {
+ *   "screenId": "uuid",
+ *   "items": [
+ *     { "media_id": "uploads/xxx.mp4", "kind": "video", "duration": null, "position": 0 },
+ *     { "media_id": "uploads/yyy.jpg", "kind": "image", "duration": 8, "position": 1 }
+ *   ]
+ * }
+ */
 
 type PublishItem = {
   media_id: string;          // storage-path i media-bucket
-  order_index: number;
-  duration_sec: number;      // 0 = auto (video)
-  days_of_week: string;      // "0,1,2"
-  time_start: string;        // "HH:MM"
-  time_end: string;          // "HH:MM"
+  kind?: "image" | "video" | null;
+  duration?: number | null;  // sek för bilder
+  position?: number | null;  // ordning
 };
 
 export async function POST(req: Request) {
   try {
-    const { playlistName, items, screenIds } = (await req.json()) as {
-      playlistName: string;
+    const { screenId, items } = (await req.json()) as {
+      screenId: string;
       items: PublishItem[];
-      screenIds: string[];
     };
 
-    if (!playlistName || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ error: "Saknas data" }, { status: 400 });
-    }
-    if (!Array.isArray(screenIds) || screenIds.length === 0) {
-      return NextResponse.json({ error: "Välj minst en skärm" }, { status: 400 });
-    }
+    if (!screenId || !Array.isArray(items))
+      return NextResponse.json(
+        { error: "Bad payload: screenId och items krävs" },
+        { status: 400 }
+      );
 
-    // 1) Skapa ny playlist
-    const { data: pl, error: plErr } = await supabaseAdmin
+    // 1) skapa ny playlist för skärmen och gör den aktiv,
+    //    samt avaktivera ev. befintlig aktiv
+    const { data: prevActive, error: getPrevErr } = await supabaseAdmin
       .from("playlists")
-      .insert({ name: playlistName })
-      .select()
-      .single();
-    if (plErr || !pl) return NextResponse.json({ error: plErr?.message || "playlist error" }, { status: 400 });
+      .select("id")
+      .eq("screen_id", screenId)
+      .eq("is_active", true)
+      .maybeSingle();
 
-    // 2) Lägg in items (media_id är TEXT)
-    const rows = items.map((it) => ({
-      playlist_id: pl.id,
-      media_id: it.media_id,              // TEXT
-      order_index: it.order_index,
-      duration_sec: it.duration_sec ?? 0,
-      days_of_week: it.days_of_week ?? "",
-      time_start: it.time_start ?? "00:00",
-      time_end: it.time_end ?? "23:59",
+    if (getPrevErr) {
+      return NextResponse.json({ error: getPrevErr.message }, { status: 500 });
+    }
+
+    if (prevActive?.id) {
+      await supabaseAdmin
+        .from("playlists")
+        .update({ is_active: false })
+        .eq("id", prevActive.id);
+    }
+
+    const { data: created, error: createErr } = await supabaseAdmin
+      .from("playlists")
+      .insert({
+        screen_id: screenId,
+        is_active: true,
+        name: `Auto ${new Date().toISOString()}`,
+      })
+      .select("id")
+      .single();
+
+    if (createErr || !created?.id) {
+      return NextResponse.json(
+        { error: createErr?.message ?? "Kunde inte skapa playlist" },
+        { status: 500 }
+      );
+    }
+
+    const playlistId = created.id as string;
+
+    // 2) lägg in items
+    const rows = items.map((it, idx) => ({
+      playlist_id: playlistId,
+      media_id: it.media_id,
+      kind: it.kind ?? guessKind(it.media_id),
+      duration: it.duration ?? (guessKind(it.media_id) === "image" ? 8 : null),
+      position: it.position ?? idx,
     }));
 
-    const { error: itemsErr } = await supabaseAdmin.from("playlist_items").insert(rows);
-    if (itemsErr) return NextResponse.json({ error: itemsErr.message }, { status: 400 });
+    const { error: insErr } = await supabaseAdmin
+      .from("playlist_items")
+      .insert(rows);
 
-    // 3) Koppla spellistan till valda skärmar som aktiv
-    const { error: scrErr } = await supabaseAdmin
-      .from("screens")
-      .update({ active_playlist_id: pl.id })
-      .in("id", screenIds);
-    if (scrErr) return NextResponse.json({ error: scrErr.message }, { status: 400 });
+    if (insErr) {
+      return NextResponse.json({ error: insErr.message }, { status: 500 });
+    }
 
-    return NextResponse.json({ ok: true, playlistId: pl.id });
+    return NextResponse.json(
+      { ok: true, playlistId, inserted: rows.length },
+      { status: 200 }
+    );
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: String(e?.message ?? e) },
+      { status: 500 }
+    );
   }
+}
+
+function guessKind(path: string): "image" | "video" {
+  const p = path.toLowerCase();
+  if (
+    p.endsWith(".jpg") ||
+    p.endsWith(".jpeg") ||
+    p.endsWith(".png") ||
+    p.endsWith(".gif") ||
+    p.endsWith(".webp")
+  ) {
+    return "image";
+  }
+  return "video";
 }
