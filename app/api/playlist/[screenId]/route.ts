@@ -2,76 +2,55 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-type ItemRow = {
-  id: string;
-  media_id: string;           // lagrar storage-path t.ex. "uploads/fil.mp4"
-  kind?: "image" | "video" | null;
-  duration?: number | null;   // sekunder för bilder
-  position?: number | null;
-};
-
 export async function GET(
   _req: Request,
   { params }: { params: { screenId: string } }
 ) {
+  const screenId = params.screenId;
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const bucket =
-      process.env.NEXT_PUBLIC_SUPABASE_BUCKET?.trim() || "media";
-
-    // 1) Hämta aktiv spellista för skärmen
-    const { data: playlist, error: plErr } = await supabaseAdmin
+    // Hämta aktiv spellista för skärmen
+    const { data: pl, error: plErr } = await supabaseAdmin
       .from("playlists")
-      .select("id")
-      .eq("screen_id", params.screenId)
-      .eq("is_active", true)
-      .single();
+      .select("id,name,status,updated_at")
+      .eq("screen_id", screenId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (plErr || !playlist) {
-      // Ingen aktiv spellista = tom lista
-      return NextResponse.json({ items: [] }, { status: 200 });
+    if (plErr) {
+      return NextResponse.json({ ok: false, error: "db_playlist_read_failed", details: plErr.message }, { status: 500 });
+    }
+    if (!pl) {
+      return NextResponse.json({ ok: true, playlist: null, items: [] });
     }
 
-    // 2) Hämta items i ordning
     const { data: items, error: itErr } = await supabaseAdmin
       .from("playlist_items")
-      .select("id, media_id, kind, duration, position")
-      .eq("playlist_id", playlist.id)
+      .select("id, media_id, position, duration_seconds, time_start, time_end, orientation, days")
+      .eq("playlist_id", pl.id)
       .order("position", { ascending: true });
 
     if (itErr) {
-      return NextResponse.json({ error: itErr.message }, { status: 500 });
+      return NextResponse.json({ ok: false, error: "db_items_read_failed", details: itErr.message }, { status: 500 });
     }
 
-    // 3) Bygg publika URLs från storage
-    const payload = (items as ItemRow[]).map((it) => {
-      const url = `${baseUrl}/storage/v1/object/public/${bucket}/${it.media_id}`;
-      const type = it.kind ?? guessKind(it.media_id);
-      const duration =
-        it.duration ?? (type === "image" ? 8 : null); // default 8s för bild
-
-      return { id: it.id, type, url, duration };
+    return NextResponse.json({
+      ok: true,
+      playlist: pl,
+      items: (items ?? []).map((r) => ({
+        id: r.id,
+        mediaId: r.media_id,
+        position: r.position ?? 0,
+        durationSeconds: r.duration_seconds ?? 15,
+        startTime: r.time_start ?? "00:00",
+        endTime: r.time_end ?? "23:59",
+        orientation: r.orientation ?? "landscape",
+        days: r.days ?? ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+        publicUrl: r.media_id, // frontend kan använda direkt (du laddar från bucket via publika URL:n/edge)
+      })),
     });
-
-    return NextResponse.json({ items: payload }, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: String(e?.message ?? e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "server_error", details: String(e?.message ?? e) }, { status: 500 });
   }
-}
-
-function guessKind(path: string): "image" | "video" {
-  const p = path.toLowerCase();
-  if (
-    p.endsWith(".jpg") ||
-    p.endsWith(".jpeg") ||
-    p.endsWith(".png") ||
-    p.endsWith(".gif") ||
-    p.endsWith(".webp")
-  ) {
-    return "image";
-  }
-  return "video";
 }
