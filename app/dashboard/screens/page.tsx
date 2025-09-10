@@ -1,91 +1,128 @@
-// app/dashboard/screens/page.tsx
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+"use client";
+
+import React from "react";
 import Link from "next/link";
+import supabase from "@/lib/supabaseBrowser";
 
-function isOnline(lastSeen: string | null): boolean {
-  if (!lastSeen) return false;
-  const last = new Date(lastSeen).getTime();
-  return Date.now() - last < 90_000; // 90 sekunder
-}
+// Hindra Next från att försöka prerendera statiskt
+export const dynamic = "force-dynamic";
 
-export default async function ScreensPage() {
-  const { data, error } = await supabaseAdmin.from("screens").select("id,name,last_seen_at").order("name", { ascending: true });
-  if (error) throw error;
+type Screen = {
+  id: string;
+  name: string | null;
+  location?: string | null;
+  updated_at?: string | null;
+};
 
-  const base =
-    process.env.NEXT_PUBLIC_BASE_URL ??
-    // fallback för lokal dev
-    "http://localhost:3000";
+export default function ScreensPage() {
+  const [screens, setScreens] = React.useState<Screen[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const { data, error } = await supabase
+      .from("screens")
+      .select("id, name, location, updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      setError(error.message);
+    } else {
+      setScreens((data as Screen[]) ?? []);
+    }
+    setLoading(false);
+  }, []);
+
+  React.useEffect(() => {
+    let ignore = false;
+
+    load();
+
+    // Lyssna på ändringar i tabellen (valfritt men nice)
+    const channel = supabase
+      .channel("screens-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "screens" },
+        () => {
+          if (!ignore) load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      ignore = true;
+      supabase.removeChannel(channel);
+    };
+  }, [load]);
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-semibold">Skärmar</h1>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        {data?.map((s) => {
-          const url = `${base}/display/${s.id}`;
-          const qr = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-            url
-          )}`;
-
-          return (
-            <div key={s.id} className="rounded-xl border p-4 bg-[var(--panel)]">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-lg font-medium">{s.name ?? "Namnlös skärm"}</div>
-                  <div className="text-sm text-[var(--ink-600)]">ID: {s.id}</div>
-                </div>
-                <span
-                  className={`text-xs px-2 py-1 rounded-full ${
-                    isOnline(s.last_seen_at)
-                      ? "bg-green-100 text-green-700"
-                      : "bg-gray-100 text-gray-700"
-                  }`}
-                >
-                  {isOnline(s.last_seen_at) ? "Online" : "Offline"}
-                </span>
-              </div>
-
-              <div className="mt-3 flex items-center gap-3">
-                {/* QR */}
-                <img src={qr} alt="QR" className="w-24 h-24 rounded-md border" />
-                <div className="flex-1">
-                  <div className="text-sm text-[var(--ink-700)] break-all">{url}</div>
-                  <div className="mt-2 flex gap-2">
-                    <CopyButton text={url} />
-                    <Link
-                      className="text-sm rounded-lg border px-3 py-1.5 hover:bg-[var(--blue-50)]"
-                      href={`/display/${s.id}`}
-                      target="_blank"
-                    >
-                      Öppna i ny flik
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-[var(--ink-900)]">Skärmar</h1>
+        <button
+          onClick={load}
+          className="rounded-lg border border-[color:var(--line)] bg-[var(--panel)] px-3 py-1.5 text-sm hover:bg-[var(--blue-25)]"
+        >
+          Uppdatera
+        </button>
       </div>
 
-      <p className="text-sm text-[var(--ink-600)]">
-        Tip: Klistra in URL:en på din Raspberry Pi i kiosk-läget. Pi rapporterar “online” när den
-        skickar heartbeat.
-      </p>
-    </div>
-  );
-}
+      {loading && (
+        <div className="text-sm text-[var(--ink-600)]">Laddar skärmar…</div>
+      )}
+      {error && (
+        <div className="text-sm text-red-600">
+          Kunde inte hämta skärmar: {error}
+        </div>
+      )}
 
-function CopyButton({ text }: { text: string }) {
-  return (
-    <button
-      className="text-sm rounded-lg border px-3 py-1.5 hover:bg-[var(--blue-50)]"
-      onClick={async () => {
-        await navigator.clipboard.writeText(text);
-        alert("Kopierad!");
-      }}
-    >
-      Kopiera URL
-    </button>
+      {!loading && !error && screens.length === 0 && (
+        <div className="text-sm text-[var(--ink-600)]">
+          Inga skärmar hittades ännu.
+        </div>
+      )}
+
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {screens.map((s) => (
+          <li
+            key={s.id}
+            className="rounded-xl ring-1 ring-[color:var(--line)] bg-[var(--panel)] p-4 flex items-center justify-between"
+          >
+            <div>
+              <div className="font-medium text-[var(--ink-900)]">
+                {s.name || `Skärm ${s.id.slice(0, 6)}`}
+              </div>
+              <div className="text-xs text-[var(--ink-600)]">
+                {s.location || "—"}
+              </div>
+              {s.updated_at && (
+                <div className="mt-0.5 text-xs text-[var(--ink-600)]">
+                  Uppdaterad: {new Date(s.updated_at).toLocaleString()}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <Link
+                href={`/display/${s.id}`}
+                className="rounded-lg border border-[color:var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--blue-25)]"
+              >
+                Öppna spelare
+              </Link>
+              <Link
+                href={`/dashboard/publish?screen=${s.id}`}
+                className="rounded-lg bg-[var(--blue-700)] text-white px-3 py-1.5 text-sm hover:opacity-90"
+              >
+                Publicera
+              </Link>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
