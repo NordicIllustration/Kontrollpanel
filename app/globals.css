@@ -1,26 +1,74 @@
 @import "tailwindcss";
 
+/* ================================
+   THEME TOKENS – LIGHT / DARK
+   ================================ */
+
+/* LIGHT (default) – ICA-inspirerat men blått/vitt */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Blues */
+  --blue-900:#0A2A43; --blue-800:#163E5F; --blue-700:#1F5D8A; --blue-600:#2B77AF; --blue-500:#3F92CE;
+  --blue-400:#66AEE0; --blue-300:#93C6EC; --blue-200:#C1DFF7; --blue-100:#E8F3FE; --blue-50:#F5FAFF; --blue-25:#FAFCFF;
+
+  /* Neutrals (“ink”) */
+  --ink-900:#0B1320; --ink-800:#1C2533; --ink-700:#2D3B4F; --ink-600:#516177; --ink-500:#7B8BA1;
+  --ink-400:#A7B3C3; --ink-300:#CFD7E2; --ink-200:#E7ECF3; --ink-100:#F4F6FA; --ink-50:#F9FBFD;
+
+  /* Semantic */
+  --green-700:#166534; --green-50:#ECFDF5;
+  --amber-700:#92400E; --amber-50:#FFFBEB;
+  --red-700:#B91C1C; --red-50:#FEF2F2;
+
+  /* Surfaces/lines */
+  --bg:#ffffff;          /* sidbakgrund */
+  --panel:#ffffff;       /* kort/menyer */
+  --line: rgba(16,24,40,.08);
+  --shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.06);
+
+  /* — Legacy map (för ev. gammal kod som använder dina gamla variabler) — */
+  --background: var(--bg);
+  --foreground: var(--ink-800);
 }
 
+/* DARK – aktiveras av <html data-theme="dark"> */
+:root[data-theme='dark']{
+  --blue-900:#CFE8FF; --blue-800:#B9DAFA; --blue-700:#9FC7EE; --blue-600:#7FB2DE; --blue-500:#5B9ACB;
+  --blue-400:#3F82B4; --blue-300:#2E6B97; --blue-200:#25597C; --blue-100:#1E4A66; --blue-50:#163A50; --blue-25:#10293A;
+
+  --ink-900:#F5F8FE; --ink-800:#DEE7F2; --ink-700:#C4D0E0; --ink-600:#A6B6C8; --ink-500:#8C9EB3;
+  --ink-400:#6F859C; --ink-300:#566C84; --ink-200:#40566C; --ink-100:#2C4156; --ink-50:#1C2B3B;
+
+  --green-700:#34D399; --green-50:#062B22;
+  --amber-700:#F59E0B; --amber-50:#2A1F04;
+  --red-700:#F87171; --red-50:#2B0C0C;
+
+  --bg:#0A1723;
+  --panel:#0F2233;
+  --line: rgba(255,255,255,.08);
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
+
+  /* — Legacy map — */
+  --background: var(--bg);
+  --foreground: var(--ink-800);
+}
+
+/* Bas – använd våra tokens globalt */
+html, body {
+  background-color: var(--bg);
+  color: var(--ink-800);
+  font-family: var(--font-geist-sans, Arial, Helvetica, sans-serif);
+}
+
+/* Mjuk övergång när tema växlas */
+.theme-transition *{
+  transition: background-color .35s ease, color .35s ease,
+              border-color .35s ease, fill .35s ease, stroke .35s ease;
+}
+
+/* (Valfritt) Tailwind CSS v4 inline theme hook om du använder det någonstans */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--bg);
+  --color-foreground: var(--ink-800);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
